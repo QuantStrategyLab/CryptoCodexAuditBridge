@@ -145,6 +145,75 @@ def codex_process_env() -> dict[str, str]:
     }
 
 
+def bootstrap_packages() -> list[str]:
+    raw = env_value("CODEX_AUDIT_PYTHON_BOOTSTRAP_PACKAGES", "pandas")
+    return shlex.split(raw)
+
+
+def package_import_name(package_spec: str) -> str:
+    package_name = re.split(r"[<>=!~\[]", package_spec, maxsplit=1)[0].strip()
+    normalized = package_name.replace("-", "_").lower()
+    if normalized == "pyyaml":
+        return "yaml"
+    return normalized
+
+
+def python_path_for_venv(venv_dir: Path) -> Path:
+    return venv_dir / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def venv_bin_path(venv_dir: Path) -> Path:
+    return venv_dir / ("Scripts" if os.name == "nt" else "bin")
+
+
+def python_can_import(python: Path, import_name: str) -> bool:
+    result = run([str(python), "-c", f"import {import_name}"], timeout=30)
+    return result.returncode == 0
+
+
+def bootstrap_python_environment() -> dict[str, str]:
+    if not parse_bool(env_value("CODEX_AUDIT_INSTALL_PYTHON_DEPS", "true")):
+        return {}
+
+    packages = bootstrap_packages()
+    if not packages:
+        return {}
+
+    venv_root = Path(env_value("CODEX_AUDIT_PYTHON_VENV", "~/.cache/crypto-codex-audit/python-venv")).expanduser()
+    python = python_path_for_venv(venv_root)
+    if not python.exists():
+        venv_root.parent.mkdir(parents=True, exist_ok=True)
+        run_checked([sys.executable, "-m", "venv", str(venv_root)], timeout=180)
+
+    missing = [package for package in packages if not python_can_import(python, package_import_name(package))]
+    if missing:
+        install_timeout = int(env_value("CODEX_AUDIT_PIP_INSTALL_TIMEOUT_SECONDS", "600"))
+        run_checked(
+            [
+                str(python),
+                "-m",
+                "pip",
+                "install",
+                "--disable-pip-version-check",
+                *missing,
+            ],
+            timeout=install_timeout,
+        )
+
+    path = os.environ.get("PATH", "")
+    return {
+        "VIRTUAL_ENV": str(venv_root),
+        "PATH": f"{venv_bin_path(venv_root)}{os.pathsep}{path}" if path else str(venv_bin_path(venv_root)),
+    }
+
+
+def codex_environment(extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    env = codex_process_env()
+    if extra_env:
+        env.update(extra_env)
+    return env
+
+
 def git_with_token(repo_dir: Path, token: str, args: list[str]) -> str:
     return run_checked(["git", *args], cwd=repo_dir, env=git_auth_env(token))
 
@@ -251,7 +320,13 @@ def build_prompt(
     )
 
 
-def run_codex(repo_dir: Path, prompt: str, timeout_minutes: int) -> tuple[int, str, str]:
+def run_codex(
+    repo_dir: Path,
+    prompt: str,
+    timeout_minutes: int,
+    *,
+    env_overrides: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     output_path = repo_dir / ".codex-audit" / "codex-final-message.md"
     command = [
         "codex",
@@ -263,7 +338,7 @@ def run_codex(repo_dir: Path, prompt: str, timeout_minutes: int) -> tuple[int, s
         str(output_path),
         "-",
     ]
-    result = run(command, env=codex_process_env(), input_text=prompt, timeout=timeout_minutes * 60)
+    result = run(command, env=codex_environment(env_overrides), input_text=prompt, timeout=timeout_minutes * 60)
     if result.stdout:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
     final_message = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
@@ -309,6 +384,45 @@ def truncate_markdown(text: str, limit: int = 12000) -> str:
 
 def strip_audit_heading(text: str) -> str:
     return re.sub(r"^## (?:Crypto|Self-hosted) Codex Audit\s*\n+", "", text.strip(), count=1)
+
+
+def github_file_url(source_repo: str, ref: str, rel_path: Path, line: int | None = None) -> str:
+    encoded_ref = urllib.parse.quote(ref, safe="/")
+    encoded_path = "/".join(urllib.parse.quote(part) for part in rel_path.parts)
+    url = f"https://github.com/{source_repo}/blob/{encoded_ref}/{encoded_path}"
+    if line is not None:
+        url += f"#L{line}"
+    return url
+
+
+def convert_local_markdown_links(text: str, repo_dir: Path, source_repo: str, ref: str) -> str:
+    repo_root = repo_dir.resolve()
+
+    def replace(match: re.Match[str]) -> str:
+        label = match.group(1)
+        target = match.group(2)
+        path_text = target
+        line: int | None = None
+        line_match = re.fullmatch(r"(.+):(\d+)", target)
+        if line_match:
+            path_text = line_match.group(1)
+            line = int(line_match.group(2))
+        path = Path(path_text)
+        if not path.is_absolute():
+            return match.group(0)
+        try:
+            rel_path = path.resolve().relative_to(repo_root)
+        except ValueError:
+            return match.group(0)
+        if not rel_path.parts or rel_path.parts[0] == ".git":
+            return match.group(0)
+        return f"[{label}]({github_file_url(source_repo, ref, rel_path, line)})"
+
+    return re.sub(r"\[([^\]]+)\]\(([^)\s]+)\)", replace, text)
+
+
+def format_codex_message(final_message: str, repo_dir: Path, source_repo: str, ref: str) -> str:
+    return convert_local_markdown_links(final_message, repo_dir, source_repo, ref).strip()
 
 
 def post_issue_comment(token: str, source_repo: str, issue_number: int, body: str) -> None:
@@ -429,7 +543,13 @@ def main() -> int:
             context_path=context_path,
             mode=mode,
         )
-        return_code, _codex_log, final_message = run_codex(repo_dir, prompt, timeout_minutes)
+        dependency_env = bootstrap_python_environment()
+        return_code, _codex_log, final_message = run_codex(
+            repo_dir,
+            prompt,
+            timeout_minutes,
+            env_overrides=dependency_env,
+        )
         if return_code != 0:
             body = "\n".join(
                 [
@@ -446,26 +566,29 @@ def main() -> int:
         status = git_status(repo_dir)
         paths = changed_paths(status)
         if mode == "review_only":
+            review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
             post_issue_comment(
                 token,
                 source_repo,
                 issue_number,
-                truncate_markdown(final_message or "Codex completed review_only mode without a final message."),
+                truncate_markdown(review_message or "Codex completed review_only mode without a final message."),
             )
             return 0
 
         if not paths:
+            review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
             post_issue_comment(
                 token,
                 source_repo,
                 issue_number,
-                truncate_markdown(final_message or "Codex found no safe code changes to make."),
+                truncate_markdown(review_message or "Codex found no safe code changes to make."),
             )
             return 0
 
         denied = blocked_paths(paths)
         if denied:
             denied_list = "\n".join(f"- `{path}`" for path in denied)
+            review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
             body = "\n".join(
                 [
                     "## Crypto Codex Audit",
@@ -477,7 +600,7 @@ def main() -> int:
                     "",
                     "Codex result:",
                     "",
-                    truncate_markdown(final_message, 7000),
+                    truncate_markdown(review_message, 7000),
                 ]
             )
             post_issue_comment(token, source_repo, issue_number, body)
@@ -489,13 +612,14 @@ def main() -> int:
             cwd=repo_dir,
         )
         git_with_token(repo_dir, token, ["push", "origin", f"HEAD:refs/heads/{branch_name}"])
-        pr = create_pull_request(token, source_repo, issue, branch_name, source_ref, final_message, paths)
+        pr_message = format_codex_message(final_message, repo_dir, source_repo, branch_name)
+        pr = create_pull_request(token, source_repo, issue, branch_name, source_ref, pr_message, paths)
         pr_url = pr.get("html_url", "")
         body_lines = [
             "## Crypto Codex Audit",
             "",
             truncate_markdown(
-                strip_audit_heading(final_message)
+                strip_audit_heading(pr_message)
                 or "Codex completed and produced a fix branch.",
                 9000,
             ),

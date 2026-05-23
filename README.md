@@ -49,6 +49,19 @@ Source repository variables:
 - `SELFHOSTED_CODEX_REVIEW_MODE`: defaults to `review_and_fix`.
 - `LEGACY_AI_REVIEW_ENABLED`: defaults to `false`.
 
+## Python Audit Environment
+
+The runner bootstraps a small cached Python virtualenv before invoking Codex.
+By default it installs `pandas`, which is enough for the monthly release
+contract and status-summary checks in `CryptoSnapshotPipelines`.
+
+Optional controls:
+
+- `CODEX_AUDIT_INSTALL_PYTHON_DEPS=false` skips dependency bootstrapping.
+- `CODEX_AUDIT_PYTHON_BOOTSTRAP_PACKAGES="pandas PyYAML"` overrides packages.
+- `CODEX_AUDIT_PYTHON_VENV=~/.cache/crypto-codex-audit/python-venv` changes the
+  persistent venv path.
+
 ## Safety Model
 
 - The monthly publish job remains deterministic and does not call model APIs.
