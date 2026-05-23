@@ -7,7 +7,7 @@ from scripts.run_monthly_codex_audit import (
     codex_process_env,
     parse_bool,
     safe_branch_component,
-    strip_selfhosted_audit_heading,
+    strip_audit_heading,
     validate_repo,
 )
 
@@ -42,9 +42,10 @@ class RunMonthlyCodexAuditTests(unittest.TestCase):
             self.assertNotIn("PRIVATE_KEY", key.upper())
             self.assertNotIn("CREDENTIAL", key.upper())
 
-    def test_strip_selfhosted_audit_heading_removes_only_leading_heading(self) -> None:
-        body = "## Self-hosted Codex Audit\n\n### Verdict\n\nOK"
-        self.assertEqual(strip_selfhosted_audit_heading(body), "### Verdict\n\nOK")
+    def test_strip_audit_heading_removes_only_leading_heading(self) -> None:
+        for heading in ("## Crypto Codex Audit", "## Self-hosted Codex Audit"):
+            body = f"{heading}\n\n### Verdict\n\nOK"
+            self.assertEqual(strip_audit_heading(body), "### Verdict\n\nOK")
 
 
 if __name__ == "__main__":
