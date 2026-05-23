@@ -45,13 +45,12 @@ jobs:
       - codex-vps
     timeout-minutes: 60
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
       SOURCE_REPO: ${{ github.event.client_payload.source_repo || inputs.source_repo || 'QuantStrategyLab/CryptoSnapshotPipelines' }}
       ISSUE_NUMBER: ${{ github.event.client_payload.issue_number || inputs.issue_number }}
       SOURCE_REF: ${{ github.event.client_payload.source_ref || inputs.source_ref || 'main' }}
       CODEX_AUDIT_MODE: ${{ github.event.client_payload.mode || inputs.mode || 'review_and_fix' }}
       CODEX_AUDIT_AUTO_MERGE: ${{ github.event.client_payload.auto_merge || inputs.auto_merge || 'false' }}
-      CODEX_AUDIT_GH_TOKEN: ${{ secrets.CODEX_AUDIT_GH_TOKEN }}
-      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - name: Checkout Bridge
         uses: actions/checkout@v6
@@ -62,6 +61,35 @@ jobs:
           command -v codex
           codex --version
 
-      - name: Run Monthly Codex Audit
-        run: python scripts/run_monthly_codex_audit.py
+      - name: Detect GitHub App Credentials
+        id: app_credentials
+        env:
+          APP_ID: ${{ vars.CROSS_REPO_GITHUB_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.CROSS_REPO_GITHUB_APP_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -n "${APP_ID:-}" ] && [ -n "${APP_PRIVATE_KEY:-}" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+          fi
 
+      - name: Create GitHub App Token For Source Repository
+        id: source_app_token
+        if: steps.app_credentials.outputs.available == 'true'
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.CROSS_REPO_GITHUB_APP_ID }}
+          private-key: ${{ secrets.CROSS_REPO_GITHUB_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          repositories: |
+            CryptoSnapshotPipelines
+          permission-contents: write
+          permission-issues: write
+          permission-pull-requests: write
+
+      - name: Run Monthly Codex Audit
+        env:
+          CODEX_AUDIT_GH_TOKEN: ${{ steps.source_app_token.outputs.token || secrets.CODEX_AUDIT_GH_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/run_monthly_codex_audit.py

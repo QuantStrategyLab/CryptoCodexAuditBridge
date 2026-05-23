@@ -23,16 +23,23 @@ Runner:
 - `codex` available in `PATH`.
 - `codex login` completed for the same OS user that runs the GitHub runner.
 
-Bridge repository secret:
+Bridge repository credentials, choose one:
 
-- `CODEX_AUDIT_GH_TOKEN`: token with access to the source repository. It needs
-  repository metadata read, contents read/write, issues read/write, and pull
-  requests read/write.
+- Preferred: `CROSS_REPO_GITHUB_APP_ID` repository variable and
+  `CROSS_REPO_GITHUB_APP_PRIVATE_KEY` repository secret. The GitHub App must be
+  installed on `CryptoSnapshotPipelines` and granted contents write, issues
+  write, and pull requests write.
+- Fallback: `CODEX_AUDIT_GH_TOKEN` repository secret with access to the source
+  repository. It needs repository metadata read, contents read/write, issues
+  read/write, and pull requests read/write.
 
-Source repository secret:
+Source repository dispatch credentials, choose one:
 
-- `CODEX_AUDIT_DISPATCH_TOKEN`: token allowed to create `repository_dispatch`
-  events in this bridge repository.
+- Preferred: the existing cross-repo GitHub App variable/secret pair
+  `CROSS_REPO_GITHUB_APP_ID` and `CROSS_REPO_GITHUB_APP_PRIVATE_KEY`. The app
+  must be installed on this bridge repository with contents write permission.
+- Fallback: `CODEX_AUDIT_DISPATCH_TOKEN` token allowed to create
+  `repository_dispatch` events in this bridge repository.
 
 Source repository variables:
 
@@ -62,4 +69,3 @@ gh workflow run selfhosted_monthly_review.yml \
   -f mode=review_and_fix \
   -f auto_merge=false
 ```
-
