@@ -39,9 +39,10 @@ Source repository dispatch credentials, choose one:
 
 - Preferred: the existing cross-repo GitHub App variable/secret pair
   `CROSS_REPO_GITHUB_APP_ID` and `CROSS_REPO_GITHUB_APP_PRIVATE_KEY`. The app
-  must be installed on this bridge repository with contents write permission.
+  must be installed on this bridge repository with actions write permission.
 - Fallback: `CODEX_AUDIT_DISPATCH_TOKEN` token allowed to create
-  `repository_dispatch` events in this bridge repository.
+  `workflow_dispatch` events for `selfhosted_monthly_review.yml` in this bridge
+  repository.
 
 Source repository variables:
 
