@@ -247,12 +247,9 @@ def run_codex(repo_dir: Path, prompt: str, timeout_minutes: int) -> tuple[int, s
     command = [
         "codex",
         "exec",
+        "--full-auto",
         "--cd",
         str(repo_dir),
-        "--sandbox",
-        "workspace-write",
-        "--ask-for-approval",
-        "never",
         "--output-last-message",
         str(output_path),
         "-",
