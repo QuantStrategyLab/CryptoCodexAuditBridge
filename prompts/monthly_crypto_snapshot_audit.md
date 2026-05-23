@@ -65,7 +65,7 @@ Not allowed without a human follow-up issue:
 6. Finish with a concise Markdown report using exactly these headings:
 
 ```markdown
-## Self-hosted Codex Audit
+## Crypto Codex Audit
 
 ### Verdict
 
@@ -80,4 +80,3 @@ Not allowed without a human follow-up issue:
 
 Use `Findings: None` when there are no actionable findings. In `Changes Made`,
 say `None` if no files were edited.
-

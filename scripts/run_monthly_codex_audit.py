@@ -307,8 +307,8 @@ def truncate_markdown(text: str, limit: int = 12000) -> str:
     return text[:limit] + "\n\n...[truncated by CryptoCodexAuditBridge]"
 
 
-def strip_selfhosted_audit_heading(text: str) -> str:
-    return re.sub(r"^## Self-hosted Codex Audit\s*\n+", "", text.strip(), count=1)
+def strip_audit_heading(text: str) -> str:
+    return re.sub(r"^## (?:Crypto|Self-hosted) Codex Audit\s*\n+", "", text.strip(), count=1)
 
 
 def post_issue_comment(token: str, source_repo: str, issue_number: int, body: str) -> None:
@@ -343,9 +343,9 @@ def create_pull_request(
             "",
             changed_list,
             "",
-            "## Self-hosted Codex Result",
+            "## Crypto Codex Result",
             "",
-            truncate_markdown(strip_selfhosted_audit_heading(final_message), 6000)
+            truncate_markdown(strip_audit_heading(final_message), 6000)
             or "Codex edited files but did not return a final message.",
         ]
     )
@@ -433,7 +433,7 @@ def main() -> int:
         if return_code != 0:
             body = "\n".join(
                 [
-                    "## Self-hosted Codex Audit",
+                    "## Crypto Codex Audit",
                     "",
                     f"Codex execution failed with exit code `{return_code}`.",
                     "",
@@ -468,7 +468,7 @@ def main() -> int:
             denied_list = "\n".join(f"- `{path}`" for path in denied)
             body = "\n".join(
                 [
-                    "## Self-hosted Codex Audit",
+                    "## Crypto Codex Audit",
                     "",
                     "Codex produced edits, but the bridge refused to push them because they touched blocked paths.",
                     "",
@@ -492,10 +492,10 @@ def main() -> int:
         pr = create_pull_request(token, source_repo, issue, branch_name, source_ref, final_message, paths)
         pr_url = pr.get("html_url", "")
         body_lines = [
-            "## Self-hosted Codex Audit",
+            "## Crypto Codex Audit",
             "",
             truncate_markdown(
-                strip_selfhosted_audit_heading(final_message)
+                strip_audit_heading(final_message)
                 or "Codex completed and produced a fix branch.",
                 9000,
             ),
