@@ -35,6 +35,9 @@ changes; report the risk and the next human decision needed.
   state, or release artifacts.
 - Keep checks bounded for a small VPS. Prefer targeted unit tests or syntax
   checks over broad data-heavy jobs.
+- If a Python virtual environment is available through `VIRTUAL_ENV` / `PATH`,
+  use `python -m ...` commands directly; do not assume the repository has a
+  checked-in `.venv`.
 
 # Fix Policy
 

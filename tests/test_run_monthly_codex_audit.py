@@ -1,10 +1,16 @@
 from __future__ import annotations
 
+import os
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 
 from scripts.run_monthly_codex_audit import (
     blocked_paths,
+    bootstrap_packages,
     codex_process_env,
+    convert_local_markdown_links,
+    package_import_name,
     parse_bool,
     safe_branch_component,
     strip_audit_heading,
@@ -46,6 +52,39 @@ class RunMonthlyCodexAuditTests(unittest.TestCase):
         for heading in ("## Crypto Codex Audit", "## Self-hosted Codex Audit"):
             body = f"{heading}\n\n### Verdict\n\nOK"
             self.assertEqual(strip_audit_heading(body), "### Verdict\n\nOK")
+
+    def test_convert_local_markdown_links_rewrites_repo_paths(self) -> None:
+        repo_dir = Path("/tmp/selfhosted-codex-audit-abc/source")
+        body = "See [script](/tmp/selfhosted-codex-audit-abc/source/scripts/run.py:42)."
+
+        converted = convert_local_markdown_links(
+            body,
+            repo_dir,
+            "QuantStrategyLab/CryptoSnapshotPipelines",
+            "codex/monthly-audit-47",
+        )
+
+        self.assertEqual(
+            converted,
+            "See [script](https://github.com/QuantStrategyLab/CryptoSnapshotPipelines/blob/codex/monthly-audit-47/scripts/run.py#L42).",
+        )
+
+    def test_convert_local_markdown_links_leaves_external_paths(self) -> None:
+        repo_dir = Path("/tmp/selfhosted-codex-audit-abc/source")
+        body = "See [outside](/tmp/other/source/scripts/run.py:42)."
+
+        self.assertEqual(
+            convert_local_markdown_links(body, repo_dir, "QuantStrategyLab/CryptoSnapshotPipelines", "main"),
+            body,
+        )
+
+    def test_package_import_name_normalizes_common_specs(self) -> None:
+        self.assertEqual(package_import_name("pandas>=3.0"), "pandas")
+        self.assertEqual(package_import_name("PyYAML==6.0"), "yaml")
+
+    def test_bootstrap_packages_uses_default(self) -> None:
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(bootstrap_packages(), ["pandas"])
 
 
 if __name__ == "__main__":
