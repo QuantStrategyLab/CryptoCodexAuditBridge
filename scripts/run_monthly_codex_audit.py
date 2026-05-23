@@ -307,6 +307,10 @@ def truncate_markdown(text: str, limit: int = 12000) -> str:
     return text[:limit] + "\n\n...[truncated by SelfHostedCodexAuditBridge]"
 
 
+def strip_selfhosted_audit_heading(text: str) -> str:
+    return re.sub(r"^## Self-hosted Codex Audit\s*\n+", "", text.strip(), count=1)
+
+
 def post_issue_comment(token: str, source_repo: str, issue_number: int, body: str) -> None:
     if parse_bool(env_value("CODEX_AUDIT_SKIP_COMMENTS")):
         print("Skipping issue comment because CODEX_AUDIT_SKIP_COMMENTS is set.")
@@ -341,7 +345,8 @@ def create_pull_request(
             "",
             "## Self-hosted Codex Result",
             "",
-            truncate_markdown(final_message, 6000) or "Codex edited files but did not return a final message.",
+            truncate_markdown(strip_selfhosted_audit_heading(final_message), 6000)
+            or "Codex edited files but did not return a final message.",
         ]
     )
     return github_request(
@@ -489,7 +494,11 @@ def main() -> int:
         body_lines = [
             "## Self-hosted Codex Audit",
             "",
-            truncate_markdown(final_message or "Codex completed and produced a fix branch.", 9000),
+            truncate_markdown(
+                strip_selfhosted_audit_heading(final_message)
+                or "Codex completed and produced a fix branch.",
+                9000,
+            ),
             "",
             f"Created fix PR: {pr_url}",
         ]
