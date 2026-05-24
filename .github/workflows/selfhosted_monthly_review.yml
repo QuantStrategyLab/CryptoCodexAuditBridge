@@ -29,6 +29,8 @@ on:
         default: "auto"
         options:
           - auto
+          - api
+          - anthropic
           - codex
           - openai
       auto_merge:
@@ -107,4 +109,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.4-mini' }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          ANTHROPIC_MODEL: ${{ vars.ANTHROPIC_MODEL || 'claude-sonnet-4-6' }}
         run: python scripts/run_monthly_codex_audit.py
