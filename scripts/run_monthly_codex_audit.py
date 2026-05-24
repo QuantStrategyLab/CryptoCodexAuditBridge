@@ -465,6 +465,69 @@ def run_openai_review(source_repo: str, source_ref: str, issue: dict[str, Any], 
     return extract_openai_text(json.loads(body))
 
 
+def auto_fallback_missing_api_key_message(reason: str) -> str:
+    return "\n".join(
+        [
+            "## Self-hosted Codex Audit",
+            "",
+            reason,
+            "",
+            "OpenAI fallback was requested by provider `auto`, but `OPENAI_API_KEY` is not configured in the bridge repository.",
+            "",
+            "No files were pushed. Configure `OPENAI_API_KEY` or inspect the bridge workflow logs.",
+        ]
+    )
+
+
+def run_auto_provider_fallback(
+    *,
+    token: str,
+    source_repo: str,
+    source_ref: str,
+    issue: dict[str, Any],
+    comments: list[dict[str, Any]],
+    issue_number: int,
+    reason: str,
+    exit_code: int = 1,
+) -> int:
+    if not env_value("OPENAI_API_KEY"):
+        post_issue_comment(token, source_repo, issue_number, auto_fallback_missing_api_key_message(reason))
+        return exit_code
+
+    try:
+        review_message = run_openai_review(source_repo, source_ref, issue, comments)
+    except BridgeError as exc:
+        body = "\n".join(
+            [
+                "## Self-hosted Codex Audit",
+                "",
+                reason,
+                "",
+                f"OpenAI fallback was configured but failed: `{exc}`",
+                "",
+                "No files were pushed. Check the bridge workflow logs for details.",
+            ]
+        )
+        post_issue_comment(token, source_repo, issue_number, body)
+        return exit_code
+
+    post_issue_comment(
+        token,
+        source_repo,
+        issue_number,
+        "\n".join(
+            [
+                "## API Monthly Review",
+                "",
+                f"{reason} Using the configured OpenAI fallback.",
+                "",
+                truncate_markdown(review_message, 10000),
+            ]
+        ),
+    )
+    return 0
+
+
 def git_status(repo_dir: Path) -> str:
     return run_checked(["git", "status", "--porcelain=v1"], cwd=repo_dir)
 
@@ -650,151 +713,144 @@ def main() -> int:
         post_issue_comment(token, source_repo, issue_number, truncate_markdown(review_message))
         return 0
 
-    with tempfile.TemporaryDirectory(prefix="selfhosted-codex-audit-") as tmp:
-        work_root = Path(tmp)
-        repo_dir = clone_source_repo(token, source_repo, source_ref, work_root)
-        stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d%H%M%S")
-        branch_name = f"codex/monthly-review-issue-{issue_number}-{stamp}"
-        run_checked(["git", "checkout", "-b", branch_name], cwd=repo_dir)
-        run_checked(["git", "config", "user.name", "selfhosted-codex-audit[bot]"], cwd=repo_dir)
-        run_checked(
-            ["git", "config", "user.email", "selfhosted-codex-audit[bot]@users.noreply.github.com"],
-            cwd=repo_dir,
-        )
+    try:
+        with tempfile.TemporaryDirectory(prefix="selfhosted-codex-audit-") as tmp:
+            work_root = Path(tmp)
+            repo_dir = clone_source_repo(token, source_repo, source_ref, work_root)
+            stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d%H%M%S")
+            branch_name = f"codex/monthly-review-issue-{issue_number}-{stamp}"
+            run_checked(["git", "checkout", "-b", branch_name], cwd=repo_dir)
+            run_checked(["git", "config", "user.name", "selfhosted-codex-audit[bot]"], cwd=repo_dir)
+            run_checked(
+                ["git", "config", "user.email", "selfhosted-codex-audit[bot]@users.noreply.github.com"],
+                cwd=repo_dir,
+            )
 
-        issue_path, context_path = write_codex_context(repo_dir, source_repo, source_ref, issue, comments)
-        prompt = build_prompt(
-            source_repo=source_repo,
-            source_ref=source_ref,
-            issue=issue,
-            issue_path=issue_path,
-            context_path=context_path,
-            mode=mode,
-        )
-        dependency_env = bootstrap_python_environment()
-        return_code, _codex_log, final_message = run_codex(
-            repo_dir,
-            prompt,
-            timeout_minutes,
-            env_overrides=dependency_env,
-        )
-        if return_code != 0:
-            if provider == "auto":
-                if env_value("OPENAI_API_KEY"):
-                    review_message = run_openai_review(source_repo, source_ref, issue, comments)
-                    post_issue_comment(
-                        token,
-                        source_repo,
-                        issue_number,
-                        "\n".join(
-                            [
-                                "## API Monthly Review",
-                                "",
-                                f"Self-hosted Codex failed with exit code `{return_code}`; using the configured OpenAI fallback.",
-                                "",
-                                truncate_markdown(review_message, 10000),
-                            ]
-                        ),
+            issue_path, context_path = write_codex_context(repo_dir, source_repo, source_ref, issue, comments)
+            prompt = build_prompt(
+                source_repo=source_repo,
+                source_ref=source_ref,
+                issue=issue,
+                issue_path=issue_path,
+                context_path=context_path,
+                mode=mode,
+            )
+            dependency_env = bootstrap_python_environment()
+            return_code, _codex_log, final_message = run_codex(
+                repo_dir,
+                prompt,
+                timeout_minutes,
+                env_overrides=dependency_env,
+            )
+            if return_code != 0:
+                if provider == "auto":
+                    return run_auto_provider_fallback(
+                        token=token,
+                        source_repo=source_repo,
+                        source_ref=source_ref,
+                        issue=issue,
+                        comments=comments,
+                        issue_number=issue_number,
+                        reason=f"Self-hosted Codex failed with exit code `{return_code}`.",
+                        exit_code=return_code,
                     )
-                    return 0
                 body = "\n".join(
                     [
                         "## Self-hosted Codex Audit",
                         "",
                         f"Codex execution failed with exit code `{return_code}`.",
                         "",
-                        "OpenAI fallback was requested by provider `auto`, but `OPENAI_API_KEY` is not configured in the bridge repository.",
-                        "",
-                        "No files were pushed. Configure `OPENAI_API_KEY` or inspect the bridge workflow logs.",
+                        "No files were pushed. Check the bridge workflow logs for details.",
                     ]
                 )
                 post_issue_comment(token, source_repo, issue_number, body)
                 return return_code
-            body = "\n".join(
-                [
-                    "## Self-hosted Codex Audit",
-                    "",
-                    f"Codex execution failed with exit code `{return_code}`.",
-                    "",
-                    "No files were pushed. Check the bridge workflow logs for details.",
-                ]
-            )
-            post_issue_comment(token, source_repo, issue_number, body)
-            return return_code
 
-        status = git_status(repo_dir)
-        paths = changed_paths(status)
-        if mode == "review_only":
-            review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
-            post_issue_comment(
-                token,
-                source_repo,
-                issue_number,
-                truncate_markdown(review_message or "Codex completed review_only mode without a final message."),
+            status = git_status(repo_dir)
+            paths = changed_paths(status)
+            if mode == "review_only":
+                review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
+                post_issue_comment(
+                    token,
+                    source_repo,
+                    issue_number,
+                    truncate_markdown(review_message or "Codex completed review_only mode without a final message."),
+                )
+                return 0
+
+            if not paths:
+                review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
+                post_issue_comment(
+                    token,
+                    source_repo,
+                    issue_number,
+                    truncate_markdown(review_message or "Codex found no safe code changes to make."),
+                )
+                return 0
+
+            denied = blocked_paths(paths)
+            if denied:
+                denied_list = "\n".join(f"- `{path}`" for path in denied)
+                review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
+                body = "\n".join(
+                    [
+                        "## Self-hosted Codex Audit",
+                        "",
+                        "Codex produced edits, but the bridge refused to push them because they touched blocked paths.",
+                        "",
+                        "Blocked paths:",
+                        denied_list,
+                        "",
+                        "Codex result:",
+                        "",
+                        truncate_markdown(review_message, 7000),
+                    ]
+                )
+                post_issue_comment(token, source_repo, issue_number, body)
+                return 1
+
+            run_checked(["git", "add", "-A"], cwd=repo_dir)
+            run_checked(
+                ["git", "commit", "-m", f"codex: monthly audit fixes for issue #{issue_number}"],
+                cwd=repo_dir,
             )
+            git_with_token(repo_dir, token, ["push", "origin", f"HEAD:refs/heads/{branch_name}"])
+            pr_message = format_codex_message(final_message, repo_dir, source_repo, branch_name)
+            pr = create_pull_request(token, source_repo, issue, branch_name, source_ref, pr_message, paths)
+            pr_url = pr.get("html_url", "")
+            body_lines = [
+                "## Self-hosted Codex Audit",
+                "",
+                truncate_markdown(
+                    strip_audit_heading(pr_message)
+                    or "Codex completed and produced a fix branch.",
+                    9000,
+                ),
+                "",
+                f"Created fix PR: {pr_url}",
+            ]
+            if auto_merge:
+                try:
+                    enable_auto_merge(token, source_repo, int(pr["number"]))
+                    body_lines.append("")
+                    body_lines.append("Auto-merge was requested and has been enabled for the PR.")
+                except BridgeError as exc:
+                    body_lines.append("")
+                    body_lines.append(f"Auto-merge was requested but could not be enabled: `{exc}`")
+            post_issue_comment(token, source_repo, issue_number, "\n".join(body_lines))
             return 0
-
-        if not paths:
-            review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
-            post_issue_comment(
-                token,
-                source_repo,
-                issue_number,
-                truncate_markdown(review_message or "Codex found no safe code changes to make."),
+    except (BridgeError, OSError, subprocess.SubprocessError) as exc:
+        if provider == "auto":
+            return run_auto_provider_fallback(
+                token=token,
+                source_repo=source_repo,
+                source_ref=source_ref,
+                issue=issue,
+                comments=comments,
+                issue_number=issue_number,
+                reason=f"Self-hosted Codex path failed before completion: `{exc}`.",
             )
-            return 0
-
-        denied = blocked_paths(paths)
-        if denied:
-            denied_list = "\n".join(f"- `{path}`" for path in denied)
-            review_message = format_codex_message(final_message, repo_dir, source_repo, source_ref)
-            body = "\n".join(
-                [
-                    "## Self-hosted Codex Audit",
-                    "",
-                    "Codex produced edits, but the bridge refused to push them because they touched blocked paths.",
-                    "",
-                    "Blocked paths:",
-                    denied_list,
-                    "",
-                    "Codex result:",
-                    "",
-                    truncate_markdown(review_message, 7000),
-                ]
-            )
-            post_issue_comment(token, source_repo, issue_number, body)
-            return 1
-
-        run_checked(["git", "add", "-A"], cwd=repo_dir)
-        run_checked(
-            ["git", "commit", "-m", f"codex: monthly audit fixes for issue #{issue_number}"],
-            cwd=repo_dir,
-        )
-        git_with_token(repo_dir, token, ["push", "origin", f"HEAD:refs/heads/{branch_name}"])
-        pr_message = format_codex_message(final_message, repo_dir, source_repo, branch_name)
-        pr = create_pull_request(token, source_repo, issue, branch_name, source_ref, pr_message, paths)
-        pr_url = pr.get("html_url", "")
-        body_lines = [
-            "## Self-hosted Codex Audit",
-            "",
-            truncate_markdown(
-                strip_audit_heading(pr_message)
-                or "Codex completed and produced a fix branch.",
-                9000,
-            ),
-            "",
-            f"Created fix PR: {pr_url}",
-        ]
-        if auto_merge:
-            try:
-                enable_auto_merge(token, source_repo, int(pr["number"]))
-                body_lines.append("")
-                body_lines.append("Auto-merge was requested and has been enabled for the PR.")
-            except BridgeError as exc:
-                body_lines.append("")
-                body_lines.append(f"Auto-merge was requested but could not be enabled: `{exc}`")
-        post_issue_comment(token, source_repo, issue_number, "\n".join(body_lines))
-        return 0
+        raise
 
 
 if __name__ == "__main__":
