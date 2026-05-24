@@ -52,9 +52,10 @@ Source repository variables:
 - `SELFHOSTED_CODEX_REVIEW_MODE`: defaults to `review_and_fix`.
 - `SELFHOSTED_CODEX_REVIEW_PROVIDER`: dispatches the bridge provider. Supported
   values are `auto`, `codex`, and `openai`. `auto` is the default production
-  path: it tries Codex first, falls back to OpenAI review when Codex fails and
-  `OPENAI_API_KEY` is configured in this bridge repository, and fails loudly
-  when the API fallback is not configured.
+  path: it tries the self-hosted Codex path first, falls back to OpenAI review
+  when Codex setup or execution fails and `OPENAI_API_KEY` is configured in
+  this bridge repository, and fails loudly when the API fallback is not
+  configured.
 - `LEGACY_AI_REVIEW_ENABLED`: defaults to `false`.
 
 The bridge only accepts the snapshot source repositories listed in the workflow
@@ -67,9 +68,10 @@ This repository owns the AI review execution layer. Source repositories should
 produce a monthly report issue and dispatch this bridge; they do not need to
 implement their own model-provider workflows.
 
-- `auto`: runs `codex` first. If Codex execution fails and `OPENAI_API_KEY` is
-  configured, it posts an OpenAI review comment instead. If the key is missing,
-  the workflow fails loudly.
+- `auto`: runs the self-hosted Codex path first. If setup, dependency bootstrap,
+  or Codex execution fails and `OPENAI_API_KEY` is configured, it posts an
+  OpenAI review comment instead. If the key is missing, the workflow fails
+  loudly.
 - `codex`: runs local `codex exec` on the self-hosted runner. In
   `review_and_fix` mode it may create a fix PR and does not use API fallback.
 - `openai`: sends the monthly issue body and recent comments to the OpenAI Chat

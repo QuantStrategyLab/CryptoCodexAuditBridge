@@ -12,6 +12,7 @@ from scripts.run_monthly_codex_audit import (
     codex_process_env,
     convert_local_markdown_links,
     extract_openai_text,
+    auto_fallback_missing_api_key_message,
     package_import_name,
     parse_bool,
     safe_branch_component,
@@ -117,6 +118,12 @@ class RunMonthlyCodexAuditTests(unittest.TestCase):
         self.assertIn("QuantStrategyLab/CryptoSnapshotPipelines", prompt)
         self.assertIn("Monthly Report", prompt)
         self.assertIn("API Monthly Review", prompt)
+
+    def test_auto_fallback_missing_api_key_message_mentions_reason(self) -> None:
+        message = auto_fallback_missing_api_key_message("Codex setup failed.")
+        self.assertIn("Codex setup failed.", message)
+        self.assertIn("OPENAI_API_KEY", message)
+        self.assertIn("No files were pushed", message)
 
 
 if __name__ == "__main__":
