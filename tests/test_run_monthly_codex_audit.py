@@ -27,10 +27,16 @@ class RunMonthlyCodexAuditTests(unittest.TestCase):
 
     def test_validate_repo_accepts_owner_repo(self) -> None:
         self.assertEqual(validate_repo("QuantStrategyLab/CryptoSnapshotPipelines"), "QuantStrategyLab/CryptoSnapshotPipelines")
+        self.assertEqual(
+            validate_repo("QuantStrategyLab/UsEquitySnapshotPipelines"),
+            "QuantStrategyLab/UsEquitySnapshotPipelines",
+        )
 
     def test_validate_repo_rejects_invalid_values(self) -> None:
         with self.assertRaises(Exception):
             validate_repo("QuantStrategyLab/CryptoSnapshotPipelines/extra")
+        with self.assertRaises(Exception):
+            validate_repo("OtherOrg/CryptoSnapshotPipelines")
 
     def test_safe_branch_component_removes_unsafe_characters(self) -> None:
         self.assertEqual(safe_branch_component("issue #12: monthly review"), "issue-12-monthly-review")

@@ -22,6 +22,12 @@ API_BASE = "https://api.github.com"
 ROOT = Path(__file__).resolve().parents[1]
 PROMPT_TEMPLATE = ROOT / "prompts" / "monthly_crypto_snapshot_audit.md"
 DEFAULT_SOURCE_REPO = "QuantStrategyLab/CryptoSnapshotPipelines"
+ALLOWED_SOURCE_REPOS = frozenset(
+    {
+        "QuantStrategyLab/CryptoSnapshotPipelines",
+        "QuantStrategyLab/UsEquitySnapshotPipelines",
+    }
+)
 DEFAULT_MODE = "review_and_fix"
 BLOCKED_PATH_RE = re.compile(
     r"(^|/)(\.env|.*secret.*|.*credential.*|.*token.*|.*private.*|.*\.pem|.*\.key)$",
@@ -47,6 +53,8 @@ def parse_bool(value: str | bool | None) -> bool:
 def validate_repo(repo: str) -> str:
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repo):
         raise BridgeError(f"Invalid repository name: {repo!r}")
+    if repo not in ALLOWED_SOURCE_REPOS:
+        raise BridgeError(f"Unsupported source repository: {repo!r}")
     return repo
 
 
