@@ -60,9 +60,9 @@ Not allowed without a human follow-up issue:
 
 1. Read `$ISSUE_MARKDOWN_PATH` first, then inspect the relevant repository code.
 2. Decide whether there are actionable defects.
-3. If `$MODE` is `review_only`, do not edit files.
-4. If `$MODE` is `review_and_fix`, make only safe, focused edits that satisfy
-   the policy above.
+3. If the selected mode above is `review_only`, do not edit files.
+4. If the selected mode above is `review_and_fix`, make only safe, focused edits
+   that satisfy the policy above.
 5. Run the smallest relevant verification commands. If a check is skipped,
    explain why.
 6. Finish with a concise Markdown report using exactly these headings:
