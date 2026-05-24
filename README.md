@@ -52,6 +52,10 @@ Source repository variables:
 - `SELFHOSTED_CODEX_REVIEW_MODE`: defaults to `review_and_fix`.
 - `LEGACY_AI_REVIEW_ENABLED`: defaults to `false`.
 
+The bridge only accepts the snapshot source repositories listed in the workflow
+and script allowlist: `QuantStrategyLab/CryptoSnapshotPipelines` and
+`QuantStrategyLab/UsEquitySnapshotPipelines`.
+
 ## Python Audit Environment
 
 The runner bootstraps a small cached Python virtualenv before invoking Codex.
