@@ -22,6 +22,15 @@ on:
         options:
           - review_only
           - review_and_fix
+      provider:
+        description: "Audit provider"
+        required: false
+        type: choice
+        default: "codex"
+        options:
+          - codex
+          - openai
+          - auto
       auto_merge:
         description: "Enable GitHub auto-merge for generated PRs"
         required: false
@@ -50,12 +59,14 @@ jobs:
       ISSUE_NUMBER: ${{ github.event.client_payload.issue_number || inputs.issue_number }}
       SOURCE_REF: ${{ github.event.client_payload.source_ref || inputs.source_ref || 'main' }}
       CODEX_AUDIT_MODE: ${{ github.event.client_payload.mode || inputs.mode || 'review_and_fix' }}
+      CODEX_AUDIT_PROVIDER: ${{ github.event.client_payload.provider || inputs.provider || 'codex' }}
       CODEX_AUDIT_AUTO_MERGE: ${{ github.event.client_payload.auto_merge || inputs.auto_merge || 'false' }}
     steps:
       - name: Checkout Bridge
         uses: actions/checkout@v6
 
       - name: Verify Codex CLI
+        if: env.CODEX_AUDIT_PROVIDER == 'codex'
         run: |
           set -euo pipefail
           command -v codex
@@ -94,4 +105,6 @@ jobs:
         env:
           CODEX_AUDIT_GH_TOKEN: ${{ steps.source_app_token.outputs.token || secrets.CODEX_AUDIT_GH_TOKEN }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL || 'gpt-5.4-mini' }}
         run: python scripts/run_monthly_codex_audit.py

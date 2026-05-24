@@ -29,6 +29,8 @@ ALLOWED_SOURCE_REPOS = frozenset(
     }
 )
 DEFAULT_MODE = "review_and_fix"
+DEFAULT_PROVIDER = "codex"
+SUPPORTED_PROVIDERS = frozenset({"codex", "openai", "auto"})
 BLOCKED_PATH_RE = re.compile(
     r"(^|/)(\.env|.*secret.*|.*credential.*|.*token.*|.*private.*|.*\.pem|.*\.key)$",
     re.IGNORECASE,
@@ -56,6 +58,13 @@ def validate_repo(repo: str) -> str:
     if repo not in ALLOWED_SOURCE_REPOS:
         raise BridgeError(f"Unsupported source repository: {repo!r}")
     return repo
+
+
+def validate_provider(provider: str) -> str:
+    normalized = (provider or DEFAULT_PROVIDER).strip().lower()
+    if normalized not in SUPPORTED_PROVIDERS:
+        raise BridgeError(f"Unsupported CODEX_AUDIT_PROVIDER: {provider!r}")
+    return normalized
 
 
 def safe_branch_component(value: str) -> str:
@@ -346,11 +355,114 @@ def run_codex(
         str(output_path),
         "-",
     ]
-    result = run(command, env=codex_environment(env_overrides), input_text=prompt, timeout=timeout_minutes * 60)
+    try:
+        result = run(command, env=codex_environment(env_overrides), input_text=prompt, timeout=timeout_minutes * 60)
+    except FileNotFoundError:
+        return 127, "codex command was not found", ""
     if result.stdout:
         print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
     final_message = output_path.read_text(encoding="utf-8") if output_path.exists() else ""
     return result.returncode, result.stdout or "", final_message.strip()
+
+
+def build_api_review_prompt(source_repo: str, source_ref: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> str:
+    comments_md = "\n\n".join(
+        f"### Comment by {comment.get('user', {}).get('login', 'unknown')}\n\n{comment.get('body') or ''}"
+        for comment in comments[:20]
+    )
+    return "\n".join(
+        [
+            "You are reviewing a monthly snapshot report issue for a QuantStrategyLab source repository.",
+            "Return a concise bilingual markdown review. Do not claim to have changed files.",
+            "Focus on release consistency, evidence gaps, downstream impact, and low-risk follow-up actions.",
+            "Do not recommend production strategy changes from one monthly snapshot alone.",
+            "",
+            "## Source",
+            "",
+            f"- Repository: {source_repo}",
+            f"- Ref: {source_ref}",
+            f"- Issue: {issue.get('html_url', '')}",
+            "",
+            "## Issue Title",
+            "",
+            issue.get("title") or "",
+            "",
+            "## Issue Body",
+            "",
+            truncate_markdown(issue.get("body") or "", 18000),
+            "",
+            "## Existing Comments",
+            "",
+            truncate_markdown(comments_md or "None", 6000),
+            "",
+            "## Output Format",
+            "",
+            "## API Monthly Review",
+            "",
+            "### English",
+            "",
+            "#### Release Consistency",
+            "#### Evidence Gaps",
+            "#### Downstream Impact",
+            "#### Operator Action Items",
+            "",
+            "### 中文",
+            "",
+            "#### 发布一致性",
+            "#### 证据缺口",
+            "#### 下游影响",
+            "#### 操作员待办事项",
+        ]
+    )
+
+
+def extract_openai_text(response: dict[str, Any]) -> str:
+    choices = response.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise BridgeError("OpenAI response did not include choices")
+    message = choices[0].get("message") if isinstance(choices[0], dict) else None
+    content = message.get("content") if isinstance(message, dict) else None
+    if isinstance(content, str) and content.strip():
+        return content.strip()
+    raise BridgeError("OpenAI response did not include text content")
+
+
+def run_openai_review(source_repo: str, source_ref: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> str:
+    api_key = env_value("OPENAI_API_KEY")
+    if not api_key:
+        raise BridgeError("OPENAI_API_KEY is required for CODEX_AUDIT_PROVIDER=openai or auto fallback")
+    model = env_value("OPENAI_MODEL", "gpt-5.4-mini")
+    base_url = env_value("OPENAI_API_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are a careful repository release reviewer. Return only markdown.",
+            },
+            {
+                "role": "user",
+                "content": build_api_review_prompt(source_repo, source_ref, issue, comments),
+            },
+        ],
+    }
+    request = urllib.request.Request(
+        f"{base_url}/chat/completions",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "crypto-codex-audit-bridge-openai",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise BridgeError(f"OpenAI API request failed: {exc.code} {detail[:600]}") from exc
+    return extract_openai_text(json.loads(body))
 
 
 def git_status(repo_dir: Path) -> str:
@@ -516,6 +628,7 @@ def main() -> int:
     mode = env_value("CODEX_AUDIT_MODE", DEFAULT_MODE)
     if mode not in {"review_only", "review_and_fix"}:
         raise BridgeError(f"Unsupported CODEX_AUDIT_MODE: {mode}")
+    provider = validate_provider(env_value("CODEX_AUDIT_PROVIDER", DEFAULT_PROVIDER))
     issue_number_raw = env_value("ISSUE_NUMBER")
     if not issue_number_raw.isdigit():
         raise BridgeError("ISSUE_NUMBER must be provided as an integer")
@@ -531,6 +644,11 @@ def main() -> int:
     comments = github_request(token, "GET", f"/repos/{source_repo}/issues/{issue_number}/comments?per_page=20")
     if not isinstance(comments, list):
         comments = []
+
+    if provider == "openai":
+        review_message = run_openai_review(source_repo, source_ref, issue, comments)
+        post_issue_comment(token, source_repo, issue_number, truncate_markdown(review_message))
+        return 0
 
     with tempfile.TemporaryDirectory(prefix="selfhosted-codex-audit-") as tmp:
         work_root = Path(tmp)
@@ -561,6 +679,23 @@ def main() -> int:
             env_overrides=dependency_env,
         )
         if return_code != 0:
+            if provider == "auto" and env_value("OPENAI_API_KEY"):
+                review_message = run_openai_review(source_repo, source_ref, issue, comments)
+                post_issue_comment(
+                    token,
+                    source_repo,
+                    issue_number,
+                    "\n".join(
+                        [
+                            "## API Monthly Review",
+                            "",
+                            f"Self-hosted Codex failed with exit code `{return_code}`; using the configured OpenAI fallback.",
+                            "",
+                            truncate_markdown(review_message, 10000),
+                        ]
+                    ),
+                )
+                return 0
             body = "\n".join(
                 [
                     "## Self-hosted Codex Audit",
