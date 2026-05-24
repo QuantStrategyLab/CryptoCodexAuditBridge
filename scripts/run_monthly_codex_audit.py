@@ -30,7 +30,7 @@ ALLOWED_SOURCE_REPOS = frozenset(
 )
 DEFAULT_MODE = "review_and_fix"
 DEFAULT_PROVIDER = "auto"
-SUPPORTED_PROVIDERS = frozenset({"codex", "openai", "auto"})
+SUPPORTED_PROVIDERS = frozenset({"api", "anthropic", "codex", "openai", "auto"})
 BLOCKED_PATH_RE = re.compile(
     r"(^|/)(\.env|.*secret.*|.*credential.*|.*token.*|.*private.*|.*\.pem|.*\.key)$",
     re.IGNORECASE,
@@ -427,10 +427,24 @@ def extract_openai_text(response: dict[str, Any]) -> str:
     raise BridgeError("OpenAI response did not include text content")
 
 
+def extract_anthropic_text(response: dict[str, Any]) -> str:
+    content = response.get("content")
+    if not isinstance(content, list):
+        raise BridgeError("Anthropic response did not include content")
+    text_parts = [
+        str(block.get("text", "")).strip()
+        for block in content
+        if isinstance(block, dict) and block.get("type") == "text" and str(block.get("text", "")).strip()
+    ]
+    if text_parts:
+        return "\n\n".join(text_parts)
+    raise BridgeError("Anthropic response did not include text content")
+
+
 def run_openai_review(source_repo: str, source_ref: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> str:
     api_key = env_value("OPENAI_API_KEY")
     if not api_key:
-        raise BridgeError("OPENAI_API_KEY is required for CODEX_AUDIT_PROVIDER=openai or auto fallback")
+        raise BridgeError("OPENAI_API_KEY is required for OpenAI API review")
     model = env_value("OPENAI_MODEL", "gpt-5.4-mini")
     base_url = env_value("OPENAI_API_BASE_URL", "https://api.openai.com/v1").rstrip("/")
     payload = {
@@ -465,6 +479,44 @@ def run_openai_review(source_repo: str, source_ref: str, issue: dict[str, Any], 
     return extract_openai_text(json.loads(body))
 
 
+def run_anthropic_review(source_repo: str, source_ref: str, issue: dict[str, Any], comments: list[dict[str, Any]]) -> str:
+    api_key = env_value("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise BridgeError("ANTHROPIC_API_KEY is required for CODEX_AUDIT_PROVIDER=anthropic or API fallback")
+    model = env_value("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    base_url = env_value("ANTHROPIC_API_BASE_URL", "https://api.anthropic.com/v1").rstrip("/")
+    api_version = env_value("ANTHROPIC_VERSION", "2023-06-01")
+    payload = {
+        "model": model,
+        "max_tokens": int(env_value("ANTHROPIC_MAX_TOKENS", "4000")),
+        "system": "You are a careful repository release reviewer. Return only markdown.",
+        "messages": [
+            {
+                "role": "user",
+                "content": build_api_review_prompt(source_repo, source_ref, issue, comments),
+            }
+        ],
+    }
+    request = urllib.request.Request(
+        f"{base_url}/messages",
+        data=json.dumps(payload).encode("utf-8"),
+        method="POST",
+        headers={
+            "x-api-key": api_key,
+            "anthropic-version": api_version,
+            "Content-Type": "application/json",
+            "User-Agent": "crypto-codex-audit-bridge-anthropic",
+        },
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise BridgeError(f"Anthropic API request failed: {exc.code} {detail[:600]}") from exc
+    return extract_anthropic_text(json.loads(body))
+
+
 def auto_fallback_missing_api_key_message(reason: str) -> str:
     return "\n".join(
         [
@@ -472,11 +524,55 @@ def auto_fallback_missing_api_key_message(reason: str) -> str:
             "",
             reason,
             "",
-            "OpenAI fallback was requested by provider `auto`, but `OPENAI_API_KEY` is not configured in the bridge repository.",
+            "API review was requested, but no fallback API keys are configured in the bridge repository.",
             "",
-            "No files were pushed. Configure `OPENAI_API_KEY` or inspect the bridge workflow logs.",
+            "No files were pushed. Configure `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY`, or inspect the bridge workflow logs.",
         ]
     )
+
+
+def run_configured_api_reviews(
+    source_repo: str,
+    source_ref: str,
+    issue: dict[str, Any],
+    comments: list[dict[str, Any]],
+) -> tuple[list[tuple[str, str]], list[str]]:
+    reviewers: list[tuple[str, str, Any]] = [
+        ("OpenAI", "OPENAI_API_KEY", run_openai_review),
+        ("Anthropic Claude", "ANTHROPIC_API_KEY", run_anthropic_review),
+    ]
+    reviews: list[tuple[str, str]] = []
+    warnings: list[str] = []
+    for label, secret_name, runner in reviewers:
+        if not env_value(secret_name):
+            warnings.append(f"{label} fallback skipped because `{secret_name}` is not configured.")
+            continue
+        try:
+            reviews.append((label, runner(source_repo, source_ref, issue, comments)))
+        except BridgeError as exc:
+            warnings.append(f"{label} fallback failed: `{exc}`")
+    return reviews, warnings
+
+
+def format_api_review_comment(reason: str, reviews: list[tuple[str, str]], warnings: list[str]) -> str:
+    lines = [
+        "## API Monthly Review",
+        "",
+        reason,
+    ]
+    for label, review in reviews:
+        lines.extend(
+            [
+                "",
+                f"### {label} Review",
+                "",
+                truncate_markdown(review, 8000),
+            ]
+        )
+    if warnings:
+        lines.extend(["", "### Fallback Warnings"])
+        lines.extend(f"- {warning}" for warning in warnings)
+    return "\n".join(lines)
 
 
 def run_auto_provider_fallback(
@@ -490,20 +586,21 @@ def run_auto_provider_fallback(
     reason: str,
     exit_code: int = 1,
 ) -> int:
-    if not env_value("OPENAI_API_KEY"):
+    if not env_value("OPENAI_API_KEY") and not env_value("ANTHROPIC_API_KEY"):
         post_issue_comment(token, source_repo, issue_number, auto_fallback_missing_api_key_message(reason))
         return exit_code
 
-    try:
-        review_message = run_openai_review(source_repo, source_ref, issue, comments)
-    except BridgeError as exc:
+    reviews, warnings = run_configured_api_reviews(source_repo, source_ref, issue, comments)
+    if not reviews:
         body = "\n".join(
             [
                 "## Self-hosted Codex Audit",
                 "",
                 reason,
                 "",
-                f"OpenAI fallback was configured but failed: `{exc}`",
+                "API fallback was configured but all API reviewers failed.",
+                "",
+                *[f"- {warning}" for warning in warnings],
                 "",
                 "No files were pushed. Check the bridge workflow logs for details.",
             ]
@@ -515,14 +612,10 @@ def run_auto_provider_fallback(
         token,
         source_repo,
         issue_number,
-        "\n".join(
-            [
-                "## API Monthly Review",
-                "",
-                f"{reason} Using the configured OpenAI fallback.",
-                "",
-                truncate_markdown(review_message, 10000),
-            ]
+        format_api_review_comment(
+            f"{reason} Using the configured API fallback reviewers.",
+            reviews,
+            warnings,
         ),
     )
     return 0
@@ -712,6 +805,20 @@ def main() -> int:
         review_message = run_openai_review(source_repo, source_ref, issue, comments)
         post_issue_comment(token, source_repo, issue_number, truncate_markdown(review_message))
         return 0
+    if provider == "anthropic":
+        review_message = run_anthropic_review(source_repo, source_ref, issue, comments)
+        post_issue_comment(token, source_repo, issue_number, truncate_markdown(review_message))
+        return 0
+    if provider == "api":
+        return run_auto_provider_fallback(
+            token=token,
+            source_repo=source_repo,
+            source_ref=source_ref,
+            issue=issue,
+            comments=comments,
+            issue_number=issue_number,
+            reason="API provider was requested directly.",
+        )
 
     try:
         with tempfile.TemporaryDirectory(prefix="selfhosted-codex-audit-") as tmp:

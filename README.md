@@ -51,11 +51,10 @@ Source repository variables:
   `QuantStrategyLab/CryptoCodexAuditBridge`.
 - `SELFHOSTED_CODEX_REVIEW_MODE`: defaults to `review_and_fix`.
 - `SELFHOSTED_CODEX_REVIEW_PROVIDER`: dispatches the bridge provider. Supported
-  values are `auto`, `codex`, and `openai`. `auto` is the default production
-  path: it tries the self-hosted Codex path first, falls back to OpenAI review
-  when Codex setup or execution fails and `OPENAI_API_KEY` is configured in
-  this bridge repository, and fails loudly when the API fallback is not
-  configured.
+  values are `auto`, `codex`, `api`, `openai`, and `anthropic`. `auto` is the
+  default production path: it tries the self-hosted Codex path first, then falls
+  back to the configured API reviewers when Codex setup or execution fails. It
+  fails loudly when no API fallback key is configured.
 - `LEGACY_AI_REVIEW_ENABLED`: defaults to `false`.
 
 The bridge only accepts the snapshot source repositories listed in the workflow
@@ -69,20 +68,31 @@ produce a monthly report issue and dispatch this bridge; they do not need to
 implement their own model-provider workflows.
 
 - `auto`: runs the self-hosted Codex path first. If setup, dependency bootstrap,
-  or Codex execution fails and `OPENAI_API_KEY` is configured, it posts an
-  OpenAI review comment instead. If the key is missing, the workflow fails
+  or Codex execution fails, it posts a combined API review from the configured
+  fallback reviewers. Configure both `OPENAI_API_KEY` and `ANTHROPIC_API_KEY`
+  for the dual-AI fallback. If neither key is configured, the workflow fails
   loudly.
 - `codex`: runs local `codex exec` on the self-hosted runner. In
   `review_and_fix` mode it may create a fix PR and does not use API fallback.
+- `api`: skips Codex and posts a combined review from the configured API
+  reviewers. It does not edit files.
 - `openai`: sends the monthly issue body and recent comments to the OpenAI Chat
   Completions API and posts a review comment. It does not edit files.
+- `anthropic`: sends the monthly issue body and recent comments to the
+  Anthropic Messages API and posts a review comment. It does not edit files.
 
-Optional bridge repository configuration for OpenAI-compatible fallback:
+Optional bridge repository configuration for API fallback:
 
 - `OPENAI_API_KEY`: repository secret.
 - `OPENAI_MODEL`: repository variable, default `gpt-5.4-mini`.
 - `OPENAI_API_BASE_URL`: optional runtime environment override for compatible
   APIs, default `https://api.openai.com/v1`.
+- `ANTHROPIC_API_KEY`: repository secret.
+- `ANTHROPIC_MODEL`: repository variable, default `claude-sonnet-4-6`.
+- `ANTHROPIC_API_BASE_URL`: optional runtime environment override, default
+  `https://api.anthropic.com/v1`.
+- `ANTHROPIC_VERSION`: optional runtime environment override, default
+  `2023-06-01`.
 
 ## Python Audit Environment
 

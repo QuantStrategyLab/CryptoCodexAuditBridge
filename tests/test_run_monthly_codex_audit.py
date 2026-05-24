@@ -11,10 +11,13 @@ from scripts.run_monthly_codex_audit import (
     build_api_review_prompt,
     codex_process_env,
     convert_local_markdown_links,
+    extract_anthropic_text,
     extract_openai_text,
     auto_fallback_missing_api_key_message,
+    format_api_review_comment,
     package_import_name,
     parse_bool,
+    run_configured_api_reviews,
     safe_branch_component,
     strip_audit_heading,
     validate_provider,
@@ -46,6 +49,8 @@ class RunMonthlyCodexAuditTests(unittest.TestCase):
         self.assertEqual(validate_provider(""), "auto")
         self.assertEqual(validate_provider("codex"), "codex")
         self.assertEqual(validate_provider("OPENAI"), "openai")
+        self.assertEqual(validate_provider("anthropic"), "anthropic")
+        self.assertEqual(validate_provider("api"), "api")
         self.assertEqual(validate_provider("auto"), "auto")
         with self.assertRaises(Exception):
             validate_provider("claude")
@@ -108,6 +113,10 @@ class RunMonthlyCodexAuditTests(unittest.TestCase):
         response = {"choices": [{"message": {"content": "review"}}]}
         self.assertEqual(extract_openai_text(response), "review")
 
+    def test_extract_anthropic_text_reads_content_blocks(self) -> None:
+        response = {"content": [{"type": "text", "text": "review"}, {"type": "text", "text": "second"}]}
+        self.assertEqual(extract_anthropic_text(response), "review\n\nsecond")
+
     def test_build_api_review_prompt_includes_source_context(self) -> None:
         prompt = build_api_review_prompt(
             "QuantStrategyLab/CryptoSnapshotPipelines",
@@ -123,7 +132,51 @@ class RunMonthlyCodexAuditTests(unittest.TestCase):
         message = auto_fallback_missing_api_key_message("Codex setup failed.")
         self.assertIn("Codex setup failed.", message)
         self.assertIn("OPENAI_API_KEY", message)
+        self.assertIn("ANTHROPIC_API_KEY", message)
         self.assertIn("No files were pushed", message)
+        self.assertNotIn("provider `auto`", message)
+
+    def test_run_configured_api_reviews_uses_both_configured_reviewers(self) -> None:
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "openai-key", "ANTHROPIC_API_KEY": "anthropic-key"}, clear=True),
+            patch("scripts.run_monthly_codex_audit.run_openai_review", return_value="openai review"),
+            patch("scripts.run_monthly_codex_audit.run_anthropic_review", return_value="anthropic review"),
+        ):
+            reviews, warnings = run_configured_api_reviews(
+                "QuantStrategyLab/CryptoSnapshotPipelines",
+                "main",
+                {"title": "Monthly Report", "body": "Body"},
+                [],
+            )
+
+        self.assertEqual(reviews, [("OpenAI", "openai review"), ("Anthropic Claude", "anthropic review")])
+        self.assertEqual(warnings, [])
+
+    def test_run_configured_api_reviews_reports_missing_optional_reviewer(self) -> None:
+        with (
+            patch.dict(os.environ, {"OPENAI_API_KEY": "openai-key"}, clear=True),
+            patch("scripts.run_monthly_codex_audit.run_openai_review", return_value="openai review"),
+        ):
+            reviews, warnings = run_configured_api_reviews(
+                "QuantStrategyLab/CryptoSnapshotPipelines",
+                "main",
+                {"title": "Monthly Report", "body": "Body"},
+                [],
+            )
+
+        self.assertEqual(reviews, [("OpenAI", "openai review")])
+        self.assertEqual(warnings, ["Anthropic Claude fallback skipped because `ANTHROPIC_API_KEY` is not configured."])
+
+    def test_format_api_review_comment_combines_reviews(self) -> None:
+        message = format_api_review_comment(
+            "Codex failed.",
+            [("OpenAI", "openai review"), ("Anthropic Claude", "anthropic review")],
+            ["Anthropic warning"],
+        )
+        self.assertIn("## API Monthly Review", message)
+        self.assertIn("### OpenAI Review", message)
+        self.assertIn("### Anthropic Claude Review", message)
+        self.assertIn("Anthropic warning", message)
 
 
 if __name__ == "__main__":
