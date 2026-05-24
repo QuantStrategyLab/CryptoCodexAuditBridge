@@ -50,11 +50,37 @@ Source repository variables:
 - `SELFHOSTED_CODEX_REVIEW_REPOSITORY`: defaults to
   `QuantStrategyLab/CryptoCodexAuditBridge`.
 - `SELFHOSTED_CODEX_REVIEW_MODE`: defaults to `review_and_fix`.
+- `SELFHOSTED_CODEX_REVIEW_PROVIDER`: dispatches the bridge provider. Supported
+  values are `codex`, `openai`, and `auto`. `codex` is the default production
+  path. `openai` posts an API review comment only. `auto` tries Codex first and
+  falls back to OpenAI review when Codex fails and `OPENAI_API_KEY` is
+  configured in this bridge repository.
 - `LEGACY_AI_REVIEW_ENABLED`: defaults to `false`.
 
 The bridge only accepts the snapshot source repositories listed in the workflow
 and script allowlist: `QuantStrategyLab/CryptoSnapshotPipelines` and
 `QuantStrategyLab/UsEquitySnapshotPipelines`.
+
+## Provider Model
+
+This repository owns the AI review execution layer. Source repositories should
+produce a monthly report issue and dispatch this bridge; they do not need to
+implement their own model-provider workflows.
+
+- `codex`: runs local `codex exec` on the self-hosted runner. In
+  `review_and_fix` mode it may create a fix PR.
+- `openai`: sends the monthly issue body and recent comments to the OpenAI Chat
+  Completions API and posts a review comment. It does not edit files.
+- `auto`: runs `codex` first. If Codex execution fails and `OPENAI_API_KEY` is
+  configured, it posts an OpenAI review comment instead of silently skipping
+  review.
+
+Optional bridge repository configuration for OpenAI-compatible fallback:
+
+- `OPENAI_API_KEY`: repository secret.
+- `OPENAI_MODEL`: repository variable, default `gpt-5.4-mini`.
+- `OPENAI_API_BASE_URL`: optional runtime environment override for compatible
+  APIs, default `https://api.openai.com/v1`.
 
 ## Python Audit Environment
 
@@ -89,5 +115,6 @@ gh workflow run selfhosted_monthly_review.yml \
   -f issue_number=123 \
   -f source_ref=main \
   -f mode=review_and_fix \
+  -f provider=codex \
   -f auto_merge=false
 ```
