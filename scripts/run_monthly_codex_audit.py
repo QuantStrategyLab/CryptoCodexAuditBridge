@@ -196,7 +196,7 @@ def bootstrap_python_environment() -> dict[str, str]:
     if not packages:
         return {}
 
-    venv_root = Path(env_value("CODEX_AUDIT_PYTHON_VENV", "~/.cache/crypto-codex-audit/python-venv")).expanduser()
+    venv_root = Path(env_value("CODEX_AUDIT_PYTHON_VENV", "~/.cache/codex-audit/python-venv")).expanduser()
     python = python_path_for_venv(venv_root)
     if not python.exists():
         venv_root.parent.mkdir(parents=True, exist_ok=True)
@@ -467,7 +467,7 @@ def run_openai_review(source_repo: str, source_ref: str, issue: dict[str, Any], 
         headers={
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json",
-            "User-Agent": "crypto-codex-audit-bridge-openai",
+            "User-Agent": "codex-audit-bridge-openai",
         },
     )
     try:
@@ -505,7 +505,7 @@ def run_anthropic_review(source_repo: str, source_ref: str, issue: dict[str, Any
             "x-api-key": api_key,
             "anthropic-version": api_version,
             "Content-Type": "application/json",
-            "User-Agent": "crypto-codex-audit-bridge-anthropic",
+            "User-Agent": "codex-audit-bridge-anthropic",
         },
     )
     try:
@@ -655,7 +655,7 @@ def blocked_paths(paths: list[str]) -> list[str]:
 def truncate_markdown(text: str, limit: int = 12000) -> str:
     if len(text) <= limit:
         return text
-    return text[:limit] + "\n\n...[truncated by CryptoCodexAuditBridge]"
+    return text[:limit] + "\n\n...[truncated by CodexAuditBridge]"
 
 
 def strip_audit_heading(text: str) -> str:
