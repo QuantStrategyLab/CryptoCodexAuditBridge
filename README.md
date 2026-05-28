@@ -1,6 +1,6 @@
-# CryptoCodexAuditBridge
+# CodexAuditBridge
 
-CryptoCodexAuditBridge runs monthly repository audits on a VPS-hosted
+CodexAuditBridge runs monthly repository audits on a VPS-hosted
 GitHub Actions runner that already has the Codex CLI installed and logged in.
 
 The intended flow is:
@@ -48,7 +48,7 @@ Source repository variables:
 
 - `SELFHOSTED_CODEX_REVIEW_ENABLED`: defaults to `true`.
 - `SELFHOSTED_CODEX_REVIEW_REPOSITORY`: defaults to
-  `QuantStrategyLab/CryptoCodexAuditBridge`.
+  `QuantStrategyLab/CodexAuditBridge`.
 - `SELFHOSTED_CODEX_REVIEW_MODE`: defaults to `review_and_fix`.
 - `SELFHOSTED_CODEX_REVIEW_PROVIDER`: dispatches the bridge provider. Supported
   values are `auto`, `codex`, `api`, `openai`, and `anthropic`. `auto` is the
@@ -104,7 +104,7 @@ Optional controls:
 
 - `CODEX_AUDIT_INSTALL_PYTHON_DEPS=false` skips dependency bootstrapping.
 - `CODEX_AUDIT_PYTHON_BOOTSTRAP_PACKAGES="pandas PyYAML"` overrides packages.
-- `CODEX_AUDIT_PYTHON_VENV=~/.cache/crypto-codex-audit/python-venv` changes the
+- `CODEX_AUDIT_PYTHON_VENV=~/.cache/codex-audit/python-venv` changes the
   persistent venv path.
 
 ## Safety Model
@@ -122,7 +122,7 @@ Optional controls:
 
 ```bash
 gh workflow run selfhosted_monthly_review.yml \
-  --repo QuantStrategyLab/CryptoCodexAuditBridge \
+  --repo QuantStrategyLab/CodexAuditBridge \
   -f source_repo=QuantStrategyLab/UsEquitySnapshotPipelines \
   -f issue_number=123 \
   -f source_ref=main \
